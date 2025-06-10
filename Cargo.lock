@@ -949,6 +949,7 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "anyhow",
+ "eyre",
  "library",
  "reth-chainspec",
  "reth-ethereum",
@@ -4008,8 +4009,12 @@ dependencies = [
  "reth-ethereum-primitives",
  "reth-execution-types",
  "reth-node-builder",
+ "reth-node-core",
  "reth-primitives",
  "reth-primitives-traits",
+ "reth-provider",
+ "reth-rpc-builder",
+ "reth-rpc-eth-api",
  "reth-tasks",
  "serde",
 ]

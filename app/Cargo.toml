@@ -8,6 +8,7 @@ edition = "2024"
 tokio.workspace= true
 serde_json.workspace = true
 anyhow.workspace = true
+eyre.workspace = true
 
 # Local dependencies
 library = { path = "../library" }

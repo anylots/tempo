@@ -12,7 +12,7 @@ use reth_tasks::TaskManager;
 
 use library::consensus::MalachiteConsensusBuilder;
 
-use anyhow::Result;
+use eyre::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -29,18 +29,14 @@ async fn main() -> Result<()> {
         .with_chain(custom_chain());
 
     let NodeHandle {
-        node,
+        node: _,
         node_exit_future: _,
     } = NodeBuilder::new(node_config)
         .testing_node(task_manager.executor())
         .with_types::<EthereumNode>()
         .with_components(EthereumNode::components().consensus(MalachiteConsensusBuilder::new()))
         .with_add_ons(EthereumAddOns::default())
-        .launch_with_fn(|builder| {
-            let launcher =
-                MalachiteNodeLauncher::new(task_manager.executor(), builder.config().datadir());
-            builder.launch_with(launcher)
-        })
+        .launch()
         .await?;
 
     Ok(())

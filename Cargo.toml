@@ -22,6 +22,9 @@ reth-execution-types = { git = "https://github.com/paradigmxyz/reth", branch = "
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-primitives-traits" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-node-core" }
 reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-node-ethereum" }
+reth-provider = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-provider" }
+reth-rpc-builder = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-rpc-builder" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-rpc-eth-api" }
 
 # Alloy dependencies
 alloy = { version = "1.0.9", default-features = false }
