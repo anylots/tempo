@@ -5,7 +5,7 @@ use reth_malachite::{
     cli::{Cli, MalachiteChainSpecParser},
     consensus::{start_consensus_engine, EngineConfig},
     context::MalachiteContext,
-    store::{tables::Tables, Store},
+    store::tables::Tables,
     types::Address,
 };
 use std::{path::PathBuf, sync::Arc};
@@ -54,29 +54,22 @@ fn main() -> eyre::Result<()> {
         // Get the beacon engine handle
         let app_handle = node.add_ons_handle.beacon_engine_handle.clone();
 
-        // Get the provider from the node to create the store
+        // Get the provider from the node
         let provider = node.provider.clone();
 
-        let store = Store::new(Arc::new(provider));
-
-        // Verify that all consensus tables exist
-        match store.verify_tables().await {
-            Ok(()) => tracing::info!("All consensus tables verified successfully"),
-            Err(e) => {
-                tracing::error!("Failed to verify consensus tables: {:?}", e);
-                return Err(e);
-            }
-        }
-
-        // Now create the application state with the engine handle and store
-        let state = State::new(
+        // Create the application state using the factory method
+        // This encapsulates Store creation and verification
+        let state = State::from_provider(
             ctx.clone(),
             config,
             genesis.clone(),
             address,
-            store,
+            Arc::new(provider),
             app_handle,
-        );
+        )
+        .await?;
+
+        tracing::info!("Application state created successfully");
 
         // Get the home directory
         let home_dir = PathBuf::from("./data"); // In production, use proper data dir
