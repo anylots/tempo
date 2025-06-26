@@ -1,5 +1,5 @@
 //! Configuration loader for the application layer.
-//! 
+//!
 //! This module provides functions to load application configuration and genesis
 //! data from files, supporting the Tendermint-compatible format used by Malachite.
 
@@ -14,7 +14,7 @@ use std::{fs, path::Path};
 pub fn load_config(config_path: &Path) -> Result<Config> {
     let config_str = fs::read_to_string(config_path)?;
     let config_value: toml::Value = toml::from_str(&config_str)?;
-    
+
     // Extract app settings if they exist
     if let Some(app) = config_value.get("app") {
         let block_time_secs = app
@@ -22,24 +22,24 @@ pub fn load_config(config_path: &Path) -> Result<Config> {
             .and_then(|v| v.as_str())
             .and_then(|s| s.trim_end_matches('s').parse::<u64>().ok())
             .unwrap_or(1);
-            
+
         let create_empty_blocks = app
             .get("empty_blocks")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
-            
+
         let fee_recipient = app
             .get("fee_recipient")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<alloy_primitives::Address>().ok())
             .unwrap_or(alloy_primitives::Address::ZERO);
-            
+
         let block_build_time_ms = app
             .get("block_build_time_ms")
             .and_then(|v| v.as_integer())
             .and_then(|i| i.try_into().ok())
             .unwrap_or(500);
-            
+
         Ok(Config {
             block_time: std::time::Duration::from_secs(block_time_secs),
             create_empty_blocks,
@@ -81,7 +81,7 @@ pub struct TendermintPubKey {
 pub fn load_genesis(genesis_path: &Path) -> Result<Genesis> {
     let genesis_str = fs::read_to_string(genesis_path)?;
     let tm_genesis: TendermintGenesis = serde_json::from_str(&genesis_str)?;
-    
+
     // Convert validators
     let mut validators = Vec::new();
     for tm_val in tm_genesis.validators {
@@ -93,23 +93,23 @@ pub fn load_genesis(genesis_path: &Path) -> Result<Genesis> {
         let mut addr_array = [0u8; 20];
         addr_array.copy_from_slice(&address_bytes);
         let address = Address::new(addr_array);
-        
+
         // Parse voting power
         let voting_power = tm_val.power.parse::<u64>()?;
-        
+
         // Decode public key from base64
         let public_key = base64::decode(&tm_val.pub_key.value)?;
-        
+
         validators.push(ValidatorInfo::new(address, voting_power, public_key));
     }
-    
+
     // Serialize app state
     let app_state = serde_json::to_vec(&tm_genesis.app_state)?;
-    
+
     // For now, use a zero hash for genesis
     // TODO: Calculate proper genesis hash
     let genesis_hash = B256::ZERO;
-    
+
     Ok(Genesis {
         chain_id: tm_genesis.chain_id,
         validators,
@@ -137,7 +137,7 @@ pub struct TendermintPrivKey {
 pub fn load_validator_key(key_path: &Path) -> Result<(Address, Vec<u8>, Vec<u8>)> {
     let key_str = fs::read_to_string(key_path)?;
     let tm_key: TendermintValidatorKey = serde_json::from_str(&key_str)?;
-    
+
     // Parse address
     let address_bytes = hex::decode(&tm_key.address)?;
     if address_bytes.len() != 20 {
@@ -146,15 +146,15 @@ pub fn load_validator_key(key_path: &Path) -> Result<(Address, Vec<u8>, Vec<u8>)
     let mut addr_array = [0u8; 20];
     addr_array.copy_from_slice(&address_bytes);
     let address = Address::new(addr_array);
-    
+
     // Decode keys from base64
     let public_key = base64::decode(&tm_key.pub_key.value)?;
     let private_key_full = base64::decode(&tm_key.priv_key.value)?;
-    
+
     // Extract just the private key part (first 32 bytes)
     // Tendermint format concatenates private key + public key
     let private_key = private_key_full[..32].to_vec();
-    
+
     Ok((address, public_key, private_key))
 }
 
