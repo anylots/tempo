@@ -65,6 +65,25 @@ trap cleanup EXIT
 log "Waiting 10 seconds for nodes to initialize..."
 sleep 10
 
+# Check if nodes actually started
+log "Checking if nodes are running..."
+for i in $(seq 0 $((NUM_NODES - 1))); do
+    if [ -f "$TESTNET_DIR/nodes/node$i/node.pid" ]; then
+        PID=$(cat "$TESTNET_DIR/nodes/node$i/node.pid")
+        if ps -p $PID > /dev/null 2>&1; then
+            log "Node $i is running (PID: $PID)"
+        else
+            error "Node $i process died immediately"
+            if [ -f "$TESTNET_DIR/logs/$i/console.log" ]; then
+                echo "Last 50 lines from node $i console log:"
+                tail -n 50 "$TESTNET_DIR/logs/$i/console.log"
+            fi
+        fi
+    else
+        error "Node $i PID file not found"
+    fi
+done
+
 # Monitor block progression
 log "Monitoring block progression (target: block $TARGET_BLOCK, timeout: ${TIMEOUT}s)..."
 start_time=$(date +%s)
@@ -148,6 +167,24 @@ while true; do
     # Require at least one responsive node
     if [ $responsive_nodes -eq 0 ]; then
         error "No nodes are responding to RPC calls"
+        # Print diagnostic information
+        for i in $(seq 0 $((NUM_NODES - 1))); do
+            echo -e "\n${YELLOW}Diagnostic info for node $i:${NC}"
+            if [ -f "$TESTNET_DIR/nodes/node$i/node.pid" ]; then
+                PID=$(cat "$TESTNET_DIR/nodes/node$i/node.pid")
+                if ps -p $PID > /dev/null 2>&1; then
+                    echo "Process still running (PID: $PID)"
+                else
+                    echo "Process not running"
+                fi
+            fi
+            if [ -f "$TESTNET_DIR/logs/$i/console.log" ]; then
+                echo "Last 30 lines of console log:"
+                tail -n 30 "$TESTNET_DIR/logs/$i/console.log"
+            else
+                echo "No console log found"
+            fi
+        done
         exit 1
     fi
     
