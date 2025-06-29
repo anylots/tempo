@@ -175,7 +175,7 @@ impl State {
             signing_provider: signing_provider.unwrap_or_else(Ed25519Provider::new_test),
             engine_handle,
             payload_store,
-            current_height: Arc::new(RwLock::new(Height::default())),
+            current_height: Arc::new(RwLock::new(Height::INITIAL)),
             current_round: Arc::new(RwLock::new(Round::Nil)),
             current_proposer: Arc::new(RwLock::new(None)),
             current_role: Arc::new(RwLock::new(Role::None)),
