@@ -7,6 +7,8 @@ jobs:
   build:
     name: Build
     runs-on: depot-ubuntu-24.04-16
+    outputs:
+      artifact_id: ${{ steps.binary_upload.outputs.artifact-id }}
     steps:
     - uses: actions/checkout@v2
     - uses: rui314/setup-mold@v1
@@ -28,8 +30,27 @@ jobs:
     - run: |
         just build-all-release
     - uses: actions/upload-artifact@v4
+      id: binary_upload
       with:
         name: tempo-x86_64-unknown-linux-gnu
         path: target/x86_64-unknown-linux-gnu/release/reth-malachite
-
-    
+  deploy:
+    name: Deploy to devnet-1
+    runs-on: depot-ubuntu-24.04-4
+    needs: build
+    steps:
+    - uses: actions/checkout@v2
+    - uses: taiki-e/install-action@just
+    - name: Install Ansible
+      shell: bash
+      run: |
+        sudo apt update
+        sudo apt install -y ansible
+    - name: Export vault password file
+      working-directory: contrib/infra/ansible
+      run: |
+        echo ${secrets.ANSIBLE_VAULT_PASSWORD} >> vault.key
+    - name: Run playbook
+      working-directory: contrib/infra/ansible
+      run: |
+        just run-playbook-ci devnet sdevnet-1 "tempo_download_url='https://api.github.com/repos/tempoxyz/tempo/actions/artifacts/${needs.build.output.artficat_id}/zip'"

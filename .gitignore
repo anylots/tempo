@@ -3,3 +3,6 @@ target
 # Testnet runtime directories
 testnet/nodes/
 testnet/logs/
+
+
+.idea
