@@ -4,9 +4,34 @@
 //! Orders support price-time priority matching, partial fills, and flip orders that
 //! automatically place opposite-side orders when filled.
 
-use alloy::primitives::{Address, B256};
+use crate::contracts::{StorageProvider, storage::slots::mapping_slot};
 
 use super::error::OrderError;
+use alloy::primitives::{Address, B256, U256, uint};
+use revm::interpreter::instructions::utility::{IntoAddress, IntoU256};
+
+// Order struct field offsets (relative to order base slot)
+// Matches Solidity Order struct layout
+/// Maker address field offset
+pub const ORDER_MAKER_OFFSET: U256 = uint!(0_U256);
+/// Orderbook key field offset
+pub const ORDER_BOOK_KEY_OFFSET: U256 = uint!(1_U256);
+/// Is bid boolean field offset
+pub const ORDER_IS_BID_OFFSET: U256 = uint!(2_U256);
+/// Tick field offset
+pub const ORDER_TICK_OFFSET: U256 = uint!(3_U256);
+/// Original amount field offset
+pub const ORDER_AMOUNT_OFFSET: U256 = uint!(4_U256);
+/// Remaining amount field offset
+pub const ORDER_REMAINING_OFFSET: U256 = uint!(5_U256);
+/// Previous order ID field offset
+pub const ORDER_PREV_OFFSET: U256 = uint!(6_U256);
+/// Next order ID field offset
+pub const ORDER_NEXT_OFFSET: U256 = uint!(7_U256);
+/// Is flip order boolean field offset
+pub const ORDER_IS_FLIP_OFFSET: U256 = uint!(8_U256);
+/// Flip tick field offset
+pub const ORDER_FLIP_TICK_OFFSET: U256 = uint!(9_U256);
 
 /// Represents an order in the stablecoin DEX orderbook.
 ///
@@ -61,10 +86,34 @@ pub struct Order {
 }
 
 impl Order {
-    /// Creates a new bid order (buying base token with quote token).
-    ///
-    /// Note: `prev` and `next` are initialized to 0.
-    /// The orderbook will set these when inserting the order into the linked list.
+    /// Creates a new order with `prev` and `next` initialized to 0.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        order_id: u128,
+        maker: Address,
+        book_key: B256,
+        amount: u128,
+        tick: i16,
+        is_bid: bool,
+        is_flip: bool,
+        flip_tick: i16,
+    ) -> Self {
+        Self {
+            order_id,
+            maker,
+            book_key,
+            is_bid,
+            tick,
+            amount,
+            remaining: amount,
+            prev: 0,
+            next: 0,
+            is_flip,
+            flip_tick,
+        }
+    }
+
+    /// Creates a new bid order
     pub fn new_bid(
         order_id: u128,
         maker: Address,
@@ -72,25 +121,10 @@ impl Order {
         amount: u128,
         tick: i16,
     ) -> Self {
-        Self {
-            order_id,
-            maker,
-            book_key,
-            is_bid: true,
-            tick,
-            amount,
-            remaining: amount,
-            prev: 0,
-            next: 0,
-            is_flip: false,
-            flip_tick: 0,
-        }
+        Self::new(order_id, maker, book_key, amount, tick, true, false, 0)
     }
 
-    /// Creates a new ask order (selling base token for quote token).
-    ///
-    /// Note: `prev` and `next` are initialized to 0.
-    /// The orderbook will set these when inserting the order into the linked list.
+    /// Creates a new ask order
     pub fn new_ask(
         order_id: u128,
         maker: Address,
@@ -98,19 +132,7 @@ impl Order {
         amount: u128,
         tick: i16,
     ) -> Self {
-        Self {
-            order_id,
-            maker,
-            book_key,
-            is_bid: false,
-            tick,
-            amount,
-            remaining: amount,
-            prev: 0,
-            next: 0,
-            is_flip: false,
-            flip_tick: 0,
-        }
+        Self::new(order_id, maker, book_key, amount, tick, false, false, 0)
     }
 
     /// Creates a new flip order.
@@ -127,8 +149,8 @@ impl Order {
         maker: Address,
         book_key: B256,
         amount: u128,
-        is_bid: bool,
         tick: i16,
+        is_bid: bool,
         flip_tick: i16,
     ) -> Result<Self, OrderError> {
         // Validate flip tick constraint
@@ -140,19 +162,219 @@ impl Order {
             return Err(OrderError::InvalidAskFlipTick { tick, flip_tick });
         }
 
-        Ok(Self {
+        Ok(Self::new(
+            order_id, maker, book_key, amount, tick, is_bid, true, flip_tick,
+        ))
+    }
+
+    pub fn from_storage<S: StorageProvider>(
+        order_id: u128,
+        storage: &mut S,
+        stablecoin_exchange: Address,
+    ) -> Self {
+        let order_slot = mapping_slot(order_id.to_be_bytes(), super::slots::ORDERS);
+
+        let maker = storage
+            .sload(stablecoin_exchange, order_slot + ORDER_MAKER_OFFSET)
+            .expect("TODO: handle error")
+            .into_address();
+
+        let book_key = B256::from(
+            storage
+                .sload(stablecoin_exchange, order_slot + ORDER_BOOK_KEY_OFFSET)
+                .expect("TODO: handle error"),
+        );
+
+        let is_bid = storage
+            .sload(stablecoin_exchange, order_slot + ORDER_IS_BID_OFFSET)
+            .expect("TODO: handle error")
+            .to::<bool>();
+
+        let tick = storage
+            .sload(stablecoin_exchange, order_slot + ORDER_TICK_OFFSET)
+            .expect("TODO: handle error")
+            .to::<i16>();
+
+        let amount = storage
+            .sload(stablecoin_exchange, order_slot + ORDER_AMOUNT_OFFSET)
+            .expect("TODO: handle error")
+            .to::<u128>();
+
+        let remaining = storage
+            .sload(stablecoin_exchange, order_slot + ORDER_REMAINING_OFFSET)
+            .expect("TODO: handle error")
+            .to::<u128>();
+
+        let prev = storage
+            .sload(stablecoin_exchange, order_slot + ORDER_PREV_OFFSET)
+            .expect("TODO: handle error")
+            .to::<u128>();
+
+        let next = storage
+            .sload(stablecoin_exchange, order_slot + ORDER_NEXT_OFFSET)
+            .expect("TODO: handle error")
+            .to::<u128>();
+
+        let is_flip = storage
+            .sload(stablecoin_exchange, order_slot + ORDER_IS_FLIP_OFFSET)
+            .expect("TODO: handle error")
+            .to::<bool>();
+
+        let flip_tick = storage
+            .sload(stablecoin_exchange, order_slot + ORDER_FLIP_TICK_OFFSET)
+            .expect("TODO: handle error")
+            .to::<i16>();
+
+        Self {
             order_id,
             maker,
             book_key,
             is_bid,
             tick,
             amount,
-            remaining: amount,
-            prev: 0,
-            next: 0,
-            is_flip: true,
+            remaining,
+            prev,
+            next,
+            is_flip,
             flip_tick,
-        })
+        }
+    }
+
+    /// Update the order's remaining value in memory and storage
+    pub fn update_remaining<S: StorageProvider>(
+        &mut self,
+        new_remaining: u128,
+        storage: &mut S,
+        stablecoin_exchange: Address,
+    ) {
+        self.remaining = new_remaining;
+
+        let order_slot = mapping_slot(self.order_id.to_be_bytes(), super::slots::ORDERS);
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_REMAINING_OFFSET,
+                U256::from(new_remaining),
+            )
+            .expect("TODO: handle error");
+    }
+
+    pub fn update_next_order<S: StorageProvider>(
+        order_id: u128,
+        new_next: u128,
+        storage: &mut S,
+        stablecoin_exchange: Address,
+    ) {
+        let order_slot = mapping_slot(order_id.to_be_bytes(), super::slots::ORDERS);
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_NEXT_OFFSET,
+                U256::from(new_next),
+            )
+            .expect("TODO: handle error");
+    }
+
+    pub fn update_prev_order<S: StorageProvider>(
+        order_id: u128,
+        new_prev: u128,
+        storage: &mut S,
+        stablecoin_exchange: Address,
+    ) {
+        let order_slot = mapping_slot(order_id.to_be_bytes(), super::slots::ORDERS);
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_PREV_OFFSET,
+                U256::from(new_prev),
+            )
+            .expect("TODO: handle error");
+    }
+
+    pub fn delete<S: StorageProvider>(&self, storage: &mut S, stablecoin_exchange: Address) {
+        let order_slot = mapping_slot(self.order_id.to_be_bytes(), super::slots::ORDERS);
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_MAKER_OFFSET,
+                U256::ZERO,
+            )
+            .expect("TODO: handle error");
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_BOOK_KEY_OFFSET,
+                U256::ZERO,
+            )
+            .expect("TODO: handle error");
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_IS_BID_OFFSET,
+                U256::ZERO,
+            )
+            .expect("TODO: handle error");
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_TICK_OFFSET,
+                U256::ZERO,
+            )
+            .expect("TODO: handle error");
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_AMOUNT_OFFSET,
+                U256::ZERO,
+            )
+            .expect("TODO: handle error");
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_REMAINING_OFFSET,
+                U256::ZERO,
+            )
+            .expect("TODO: handle error");
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_PREV_OFFSET,
+                U256::ZERO,
+            )
+            .expect("TODO: handle error");
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_NEXT_OFFSET,
+                U256::ZERO,
+            )
+            .expect("TODO: handle error");
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_IS_FLIP_OFFSET,
+                U256::ZERO,
+            )
+            .expect("TODO: handle error");
+
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_FLIP_TICK_OFFSET,
+                U256::ZERO,
+            )
+            .expect("TODO: handle error");
     }
 
     /// Returns the order ID.
@@ -253,6 +475,80 @@ impl Order {
         Ok(())
     }
 
+    pub fn store<S: StorageProvider>(&self, storage: &mut S, stablecoin_exchange: Address) {
+        let order_slot = mapping_slot(self.order_id.to_be_bytes(), super::slots::ORDERS);
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_MAKER_OFFSET,
+                self.maker().into_u256(),
+            )
+            .expect("Storage write failed");
+
+        // Store book_key
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_BOOK_KEY_OFFSET,
+                U256::from_be_bytes(self.book_key().0),
+            )
+            .expect("Storage write failed");
+
+        // Store is_bid boolean
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_IS_BID_OFFSET,
+                U256::from(self.is_bid() as u8),
+            )
+            .expect("Storage write failed");
+
+        // Store tick
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_TICK_OFFSET,
+                U256::from(self.tick() as i128 as u128), // Cast i16 through i128 to preserve sign
+            )
+            .expect("Storage write failed");
+
+        // Store original amount
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_AMOUNT_OFFSET,
+                U256::from(self.amount()),
+            )
+            .expect("Storage write failed");
+
+        // Store remaining amount
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_REMAINING_OFFSET,
+                U256::from(self.remaining()),
+            )
+            .expect("Storage write failed");
+
+        // Store is_flip boolean
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_IS_FLIP_OFFSET,
+                U256::from(self.is_flip() as u8),
+            )
+            .expect("Storage write failed");
+
+        // Store flip_tick
+        storage
+            .sstore(
+                stablecoin_exchange,
+                order_slot + ORDER_FLIP_TICK_OFFSET,
+                U256::from(self.flip_tick() as i128 as u128),
+            )
+            .expect("Storage write failed");
+    }
+
     /// Creates a flipped order from a fully filled flip order.
     ///
     /// When a flip order is completely filled, it creates a new order on the opposite side:
@@ -297,6 +593,7 @@ impl Order {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contracts::HashMapStorageProvider;
     use alloy::primitives::{address, b256};
 
     const TEST_MAKER: Address = address!("0x1111111111111111111111111111111111111111");
@@ -333,16 +630,7 @@ mod tests {
 
     #[test]
     fn test_new_flip_order_bid() {
-        let order = Order::new_flip(
-            1,
-            TEST_MAKER,
-            TEST_BOOK_KEY,
-            1000,
-            true, // Bid
-            5,
-            10, // flip_tick > tick for bid
-        )
-        .unwrap();
+        let order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, true, 10).unwrap();
 
         assert!(order.is_flip());
         assert_eq!(order.flip_tick(), 10);
@@ -352,16 +640,7 @@ mod tests {
 
     #[test]
     fn test_new_flip_order_ask() {
-        let order = Order::new_flip(
-            1,
-            TEST_MAKER,
-            TEST_BOOK_KEY,
-            1000,
-            false, // Ask
-            5,
-            2, // flip_tick < tick for ask
-        )
-        .unwrap();
+        let order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, false, 2).unwrap();
 
         assert!(order.is_flip());
         assert_eq!(order.flip_tick(), 2);
@@ -372,30 +651,14 @@ mod tests {
 
     #[test]
     fn test_new_flip_order_bid_invalid_flip_tick() {
-        let result = Order::new_flip(
-            1,
-            TEST_MAKER,
-            TEST_BOOK_KEY,
-            1000,
-            true, // Bid
-            5,
-            3, // Invalid: flip_tick <= tick for bid
-        );
+        let result = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, true, 3);
 
         assert!(matches!(result, Err(OrderError::InvalidBidFlipTick { .. })));
     }
 
     #[test]
     fn test_new_flip_order_ask_invalid_flip_tick() {
-        let result = Order::new_flip(
-            1,
-            TEST_MAKER,
-            TEST_BOOK_KEY,
-            1000,
-            false, // Ask
-            5,
-            7, // Invalid: flip_tick >= tick for ask
-        );
+        let result = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, false, 7);
 
         assert!(matches!(result, Err(OrderError::InvalidAskFlipTick { .. })));
     }
@@ -437,16 +700,7 @@ mod tests {
 
     #[test]
     fn test_create_flipped_order_bid_to_ask() {
-        let mut order = Order::new_flip(
-            1,
-            TEST_MAKER,
-            TEST_BOOK_KEY,
-            1000,
-            true, // Bid
-            5,    // tick
-            10,   // flip_tick
-        )
-        .unwrap();
+        let mut order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, true, 10).unwrap();
 
         // Fully fill the order
         order.fill(1000).unwrap();
@@ -469,16 +723,7 @@ mod tests {
 
     #[test]
     fn test_create_flipped_order_ask_to_bid() {
-        let mut order = Order::new_flip(
-            1,
-            TEST_MAKER,
-            TEST_BOOK_KEY,
-            1000,
-            false, // Ask
-            10,    // tick
-            5,     // flip_tick (< tick for ask)
-        )
-        .unwrap();
+        let mut order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 10, false, 5).unwrap();
 
         order.fill(1000).unwrap();
         let flipped = order.create_flipped_order(2).unwrap();
@@ -500,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_create_flipped_order_not_filled() {
-        let order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, true, 5, 10).unwrap();
+        let order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, true, 10).unwrap();
 
         let result = order.create_flipped_order(2);
         assert!(matches!(
@@ -528,7 +773,7 @@ mod tests {
     #[test]
     fn test_multiple_flips() {
         // Test that an order can flip multiple times
-        let mut order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, true, 5, 10).unwrap();
+        let mut order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, true, 10).unwrap();
 
         // First flip: bid -> ask
         order.fill(1000).unwrap();
@@ -585,7 +830,7 @@ mod tests {
 
     #[test]
     fn test_flipped_order_resets_linked_list_pointers() {
-        let mut order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, true, 5, 10).unwrap();
+        let mut order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, true, 10).unwrap();
 
         // Set linked list pointers on original order
         order.set_prev(100);
@@ -600,5 +845,50 @@ mod tests {
         // Flipped order should have reset pointers
         assert_eq!(flipped.prev(), 0);
         assert_eq!(flipped.next(), 0);
+    }
+
+    #[test]
+    fn test_store_order() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let exchange_address = Address::random();
+
+        let order = Order::new_flip(42, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, true, 10).unwrap();
+        order.store(&mut storage, exchange_address);
+
+        let loaded_order = Order::from_storage(42, &mut storage, exchange_address);
+        assert_eq!(loaded_order.order_id(), 42);
+        assert_eq!(loaded_order.maker(), TEST_MAKER);
+        assert_eq!(loaded_order.book_key(), TEST_BOOK_KEY);
+        assert_eq!(loaded_order.amount(), 1000);
+        assert_eq!(loaded_order.remaining(), 1000);
+        assert_eq!(loaded_order.tick(), 5);
+        assert!(loaded_order.is_bid());
+        assert!(loaded_order.is_flip());
+        assert_eq!(loaded_order.flip_tick(), 10);
+        assert_eq!(loaded_order.prev(), 0);
+        assert_eq!(loaded_order.next(), 0);
+    }
+
+    #[test]
+    fn test_delete_order() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let exchange_address = Address::random();
+
+        let order = Order::new_flip(42, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, true, 10).unwrap();
+        order.store(&mut storage, exchange_address);
+        order.delete(&mut storage, exchange_address);
+
+        let deleted_order = Order::from_storage(42, &mut storage, exchange_address);
+        assert_eq!(deleted_order.order_id(), 42);
+        assert_eq!(deleted_order.maker(), Address::ZERO);
+        assert_eq!(deleted_order.book_key(), B256::ZERO);
+        assert_eq!(deleted_order.amount(), 0);
+        assert_eq!(deleted_order.remaining(), 0);
+        assert_eq!(deleted_order.tick(), 0);
+        assert!(!deleted_order.is_bid());
+        assert!(!deleted_order.is_flip());
+        assert_eq!(deleted_order.flip_tick(), 0);
+        assert_eq!(deleted_order.prev(), 0);
+        assert_eq!(deleted_order.next(), 0);
     }
 }
