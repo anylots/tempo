@@ -2347,7 +2347,7 @@ dependencies = [
 [[package]]
 name = "commonware-broadcast"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -2365,7 +2365,7 @@ dependencies = [
 [[package]]
 name = "commonware-codec"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "bytes",
  "paste",
@@ -2375,7 +2375,7 @@ dependencies = [
 [[package]]
 name = "commonware-consensus"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -2400,7 +2400,7 @@ dependencies = [
 [[package]]
 name = "commonware-cryptography"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "blake3",
  "blst",
@@ -2425,7 +2425,7 @@ dependencies = [
 [[package]]
 name = "commonware-macros"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "futures",
  "proc-macro2",
@@ -2438,7 +2438,7 @@ dependencies = [
 [[package]]
 name = "commonware-p2p"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -2464,7 +2464,7 @@ dependencies = [
 [[package]]
 name = "commonware-resolver"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "bimap",
  "bytes",
@@ -2486,7 +2486,7 @@ dependencies = [
 [[package]]
 name = "commonware-runtime"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "async-lock",
  "axum",
@@ -2502,6 +2502,7 @@ dependencies = [
  "opentelemetry 0.28.0",
  "opentelemetry-otlp 0.28.0",
  "opentelemetry_sdk 0.28.0",
+ "pin-project",
  "prometheus-client",
  "rand 0.8.5",
  "rayon",
@@ -2517,7 +2518,7 @@ dependencies = [
 [[package]]
 name = "commonware-storage"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -2539,7 +2540,7 @@ dependencies = [
 [[package]]
 name = "commonware-stream"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "bytes",
  "chacha20poly1305",
@@ -2559,7 +2560,7 @@ dependencies = [
 [[package]]
 name = "commonware-utils"
 version = "0.0.62"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=a68f75ec78bab93e551637f4799acc7b539f4f1a#a68f75ec78bab93e551637f4799acc7b539f4f1a"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=0124b5fb2b3859a702f0ae6d9678ce37ac906db4#0124b5fb2b3859a702f0ae6d9678ce37ac906db4"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -11514,13 +11515,13 @@ dependencies = [
  "commonware-codec",
  "commonware-consensus",
  "commonware-cryptography",
+ "commonware-macros",
  "commonware-p2p",
  "commonware-resolver",
  "commonware-runtime",
  "commonware-utils",
  "eyre",
- "futures-channel",
- "futures-util",
+ "futures",
  "governor 0.6.3",
  "indexmap 2.11.4",
  "rand 0.8.5",
@@ -11587,6 +11588,33 @@ name = "tempo-contracts"
 version = "0.1.0"
 dependencies = [
  "alloy",
+]
+
+[[package]]
+name = "tempo-e2e"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "commonware-cryptography",
+ "commonware-macros",
+ "commonware-p2p",
+ "commonware-runtime",
+ "commonware-utils",
+ "eyre",
+ "futures",
+ "reth-db",
+ "reth-ethereum",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-rpc-builder",
+ "tempfile",
+ "tempo-chainspec",
+ "tempo-commonware-node",
+ "tempo-eyre",
+ "tempo-node",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.20",
 ]
 
 [[package]]

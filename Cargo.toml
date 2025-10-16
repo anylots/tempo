@@ -17,6 +17,7 @@ members = [
   "crates/consensus",
   "crates/eyre",
   "crates/evm",
+  "crates/e2e",
   "crates/faucet",
   "crates/node",
   "crates/payload/builder",
@@ -188,6 +189,7 @@ commonware-broadcast = "0.0.62"
 commonware-codec = "0.0.62"
 commonware-consensus = "0.0.62"
 commonware-cryptography = "0.0.62"
+commonware-macros = "0.0.62"
 commonware-p2p = "0.0.62"
 commonware-resolver = "0.0.62"
 commonware-runtime = "0.0.62"
@@ -241,12 +243,12 @@ vergen = "9"
 vergen-git2 = "1"
 
 [patch.crates-io]
-commonware-broadcast = { git = "https://github.com/commonwarexyz/monorepo", rev = "a68f75ec78bab93e551637f4799acc7b539f4f1a" }
-commonware-codec = { git = "https://github.com/commonwarexyz/monorepo", rev = "a68f75ec78bab93e551637f4799acc7b539f4f1a" }
-commonware-consensus = { git = "https://github.com/commonwarexyz/monorepo", rev = "a68f75ec78bab93e551637f4799acc7b539f4f1a" }
-commonware-cryptography = { git = "https://github.com/commonwarexyz/monorepo", rev = "a68f75ec78bab93e551637f4799acc7b539f4f1a" }
-commonware-p2p = { git = "https://github.com/commonwarexyz/monorepo", rev = "a68f75ec78bab93e551637f4799acc7b539f4f1a" }
-commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", rev = "a68f75ec78bab93e551637f4799acc7b539f4f1a" }
-commonware-runtime = { git = "https://github.com/commonwarexyz/monorepo", rev = "a68f75ec78bab93e551637f4799acc7b539f4f1a" }
-commonware-utils = { git = "https://github.com/commonwarexyz/monorepo", rev = "a68f75ec78bab93e551637f4799acc7b539f4f1a" }
-
+commonware-broadcast = { git = "https://github.com/commonwarexyz/monorepo", rev = "0124b5fb2b3859a702f0ae6d9678ce37ac906db4" }
+commonware-codec = { git = "https://github.com/commonwarexyz/monorepo", rev = "0124b5fb2b3859a702f0ae6d9678ce37ac906db4" }
+commonware-consensus = { git = "https://github.com/commonwarexyz/monorepo", rev = "0124b5fb2b3859a702f0ae6d9678ce37ac906db4" }
+commonware-cryptography = { git = "https://github.com/commonwarexyz/monorepo", rev = "0124b5fb2b3859a702f0ae6d9678ce37ac906db4" }
+commonware-macros = { git = "https://github.com/commonwarexyz/monorepo", rev = "0124b5fb2b3859a702f0ae6d9678ce37ac906db4" }
+commonware-p2p = { git = "https://github.com/commonwarexyz/monorepo", rev = "0124b5fb2b3859a702f0ae6d9678ce37ac906db4" }
+commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", rev = "0124b5fb2b3859a702f0ae6d9678ce37ac906db4" }
+commonware-runtime = { git = "https://github.com/commonwarexyz/monorepo", rev = "0124b5fb2b3859a702f0ae6d9678ce37ac906db4" }
+commonware-utils = { git = "https://github.com/commonwarexyz/monorepo", rev = "0124b5fb2b3859a702f0ae6d9678ce37ac906db4" }
