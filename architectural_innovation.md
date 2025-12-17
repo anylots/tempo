@@ -39,6 +39,7 @@ Tempo 引入了一种全新的“有状态预编译”模型，这是其执行�
 - **Rust 实现，EVM 状态**：预编译合约使用 Rust 编写以获得原生性能和更高zkp效率，但其状态直接映射到 EVM 的 Storage Trie 上。这意味着 Rust 代码可以直接操作 EVM 存储槽，与 Solidity 合约无缝互操作。
 - **Solidity 作为规范 (Spec)**：Tempo 采用了一种独特的开发模式——使用 Solidity 合约作为“接口规范”和“行为基准”，而实际运行时使用高性能的 Rust 实现。通过 `tempo-foundry`，可以确保 Rust 实现与 Solidity 规范在行为上严格一致。
 - **存储抽象层**：通过 `Slot<T>` 和 `Mapping<K,V>` 等 Rust 抽象，开发者可以像写 Solidity 一样编写 Rust 合约，同时底层自动处理存储槽哈希计算和访问。
+- **动态预编译 (Dynamic Precompile)**：Tempo 的预编译不仅仅是单例，更支持“模板化”模式。通过 `revm` 的动态查找机制 (Dynamic Lookup) 和 Rust 闭包的环境捕获特性，同一份 Rust 预编译代码（如 TIP-20 模板）可以被映射到无数个合约地址上。运行时会根据被调用的地址动态创建独立的 Rust 结构体实例，并自动隔离其在 EVM MPT 中的状态存储。这使得开发者可以用一份 Rust 代码支撑起整个生态系统的代币合约，既有原生代码的性能，又有智能合约的灵活性。
 - **原生隐私与密码学**：基于 Native Code 的 Stateful Precompiles 为隐私应用提供了理想的实现路径。它兼具隐私链（如 Zcash）的效率优势与隐私合约（如 Railgun）的合规/灵活性，能够以极低的 Gas 成本解锁更多高级密码学特性。
 
 
