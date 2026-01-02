@@ -86,16 +86,12 @@ contract StablecoinExchangeTest is BaseTest {
         assertEq(tick, expectedTick);
     }
 
-    function test_PairKey(address tokenA, address tokenB) public view {
-        (address _token0, address _token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-        bytes32 expectedKey = keccak256(abi.encodePacked(_token0, _token1));
+    function test_PairKey(address base, address quote) public view {
+        bytes32 expectedKey = keccak256(abi.encodePacked(base, quote));
 
-        bytes32 key1 = exchange.pairKey(tokenA, tokenB);
-        bytes32 key2 = exchange.pairKey(tokenB, tokenA);
+        bytes32 key = exchange.pairKey(base, quote);
 
-        assertEq(key1, key2);
-        assertEq(key1, expectedKey);
-        assertEq(key2, expectedKey);
+        assertEq(key, expectedKey);
     }
 
     function test_CreatePair() public {
@@ -111,6 +107,69 @@ contract StablecoinExchangeTest is BaseTest {
 
         bytes32 key = exchange.createPair(address(newBase));
         assertEq(key, expectedKey);
+    }
+
+    /// @notice Orderbook keys should be order-sensitive and change when quoteToken changes.
+    function test_OrderbookPairs_AreOrderSensitive_AcrossQuoteUpdates() public {
+        // Create a dedicated base token and two possible quote tokens, all USD-denominated.
+        vm.startPrank(admin);
+        ITIP20 base = ITIP20(factory.createToken("OBBase", "OBB", "USD", pathUSD, admin));
+        ITIP20 quote1 = ITIP20(factory.createToken("OBQuote1", "OBQ1", "USD", pathUSD, admin));
+        vm.stopPrank();
+
+        // Initial state: base quotes PathUSD
+        assertEq(address(base.quoteToken()), address(pathUSD));
+
+        // 1) First pair: (base, PathUSD)
+        bytes32 key0 = exchange.createPair(address(base));
+        (address b0, address q0,,) = exchange.books(key0);
+        assertEq(b0, address(base), "first book base mismatch");
+        assertEq(q0, address(pathUSD), "first book quote mismatch");
+
+        // 2) Update base's quote token to quote1 and create a new pair
+        vm.startPrank(admin);
+        base.setNextQuoteToken(quote1);
+        base.completeQuoteTokenUpdate();
+        vm.stopPrank();
+
+        assertEq(address(base.quoteToken()), address(quote1));
+
+        bytes32 key1 = exchange.createPair(address(base));
+        (address b1, address q1,,) = exchange.books(key1);
+        assertEq(b1, address(base), "second book base mismatch");
+        assertEq(q1, address(quote1), "second book quote mismatch");
+
+        // Keys must differ when quoteToken changes
+        assertTrue(key1 != key0, "orderbook key should change when quoteToken changes");
+
+        // 3) Reset base's quote token back to PathUSD so that setting quote1's
+        // quote token to base does not create a quote-token loop.
+        vm.startPrank(admin);
+        base.setNextQuoteToken(pathUSD);
+        base.completeQuoteTokenUpdate();
+        vm.stopPrank();
+
+        assertEq(address(base.quoteToken()), address(pathUSD));
+
+        // 4) Now set quote1's quote token to base and create a pair for quote1.
+        // This tests that we can still create a new pair where the previous quote
+        // becomes the base, and that the key is order-sensitive.
+        vm.startPrank(admin);
+        quote1.setNextQuoteToken(base);
+        quote1.completeQuoteTokenUpdate();
+        vm.stopPrank();
+
+        assertEq(address(quote1.quoteToken()), address(base));
+
+        bytes32 key2 = exchange.createPair(address(quote1));
+        (address b2, address q2,,) = exchange.books(key2);
+        assertEq(b2, address(quote1), "third book base mismatch");
+        assertEq(q2, address(base), "third book quote mismatch");
+
+        // The (base, quote1) and (quote1, base) books must have different keys
+        assertTrue(key2 != key1, "reversed base/quote should have different key");
+        // And also be distinct from the initial (base, PathUSD) configuration
+        assertTrue(key2 != key0, "third key should differ from first");
     }
 
     function test_PlaceBidOrder() public {
@@ -1204,6 +1263,415 @@ contract StablecoinExchangeTest is BaseTest {
             exchange.getTickLevel(address(token1), flipTick, false);
         assertEq(askHead, 0);
         assertEq(askLiquidity, 0);
+    }
+
+    function test_FlipOrder_DoesNotFlipWhenMakerWithdrawsBalance() public {
+        // Alice places a flip bid order: buying 2e18 base tokens at tick 100, will flip to ask at tick 200
+        uint128 orderAmount = 2e18;
+        int16 tick = 100;
+        int16 flipTick = 200;
+
+        vm.prank(alice);
+        uint128 flipOrderId = exchange.placeFlip(address(token1), orderAmount, true, tick, flipTick);
+
+        // Bob partially fills the order (sells 1e18 base tokens)
+        // This credits Alice's internal balance with 1e18 base tokens
+        vm.prank(bob);
+        exchange.swapExactAmountIn(address(token1), address(pathUSD), 1e18, 0);
+
+        // Verify Alice has received base tokens in her internal balance
+        uint128 aliceBaseBalance = exchange.balanceOf(alice, address(token1));
+        assertEq(aliceBaseBalance, 1e18, "Alice should have 1e18 base tokens in internal balance");
+
+        // Alice withdraws all her internal base token balance
+        vm.prank(alice);
+        exchange.withdraw(address(token1), aliceBaseBalance);
+
+        // Verify Alice's internal balance is now 0
+        assertEq(
+            exchange.balanceOf(alice, address(token1)), 0, "Alice's internal balance should be 0"
+        );
+
+        // Verify Alice still has sufficient external token balance and approval for a flip order
+        // For a flip ask at tick 200, she would need to escrow base tokens
+        assertGt(
+            token1.balanceOf(alice),
+            orderAmount,
+            "Alice should have sufficient external token balance"
+        );
+        assertGt(
+            token1.allowance(alice, address(exchange)),
+            orderAmount,
+            "Alice should have sufficient approval"
+        );
+
+        uint128 nextOrderIdBefore = exchange.nextOrderId();
+
+        // Bob fills the remaining order (sells another 1e18 base tokens)
+        // The flip order should NOT be created because Alice's internal balance is insufficient
+        // and we don't resort to transferFrom for flip orders
+        vm.prank(bob);
+        exchange.swapExactAmountIn(address(token1), address(pathUSD), 1e18, 0);
+
+        // The original flip order should be fully filled and deleted
+        try exchange.getOrder(flipOrderId) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(IStablecoinExchange.OrderDoesNotExist.selector));
+        }
+
+        // No new flip order should have been created
+        // If a flip order was created, nextOrderId would have incremented
+        assertEq(
+            exchange.nextOrderId(),
+            nextOrderIdBefore,
+            "No new order should be created - flip should not execute when internal balance is insufficient"
+        );
+
+        // Verify no liquidity exists at the flip tick (ask at tick 200)
+        (uint128 askHead, uint128 askTail, uint128 askLiquidity) =
+            exchange.getTickLevel(address(token1), flipTick, false);
+        assertEq(askHead, 0, "No ask order should exist at flip tick");
+        assertEq(askTail, 0, "No ask order should exist at flip tick");
+        assertEq(askLiquidity, 0, "No liquidity should exist at flip tick");
+    }
+
+    /// @notice Test that a maker blacklisted in the token they are buying cannot place a bid order
+    /// @dev This tests the new check that verifies authorization on both base and quote tokens
+    function test_BlacklistedInBuyToken_CannotPlaceBidOrder() public {
+        // Create a blacklist policy for token1 (the base token alice wants to buy)
+        uint64 policyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+
+        // Set the policy on token1
+        vm.prank(admin);
+        token1.changeTransferPolicyId(policyId);
+
+        // Blacklist alice in token1
+        vm.prank(admin);
+        registry.modifyPolicyBlacklist(policyId, alice, true);
+
+        // Verify alice is blacklisted in token1
+        assertFalse(registry.isAuthorized(policyId, alice), "Alice should be blacklisted in token1");
+
+        // Alice tries to place a bid order to BUY token1 with pathUSD
+        // Even though alice is authorized in pathUSD (the escrow token), she is blacklisted in token1
+        uint128 orderAmount = exchange.MIN_ORDER_AMOUNT() * 2;
+        vm.prank(alice);
+        try exchange.place(address(token1), orderAmount, true, 100) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(ITIP20.PolicyForbids.selector));
+        }
+    }
+
+    /// @notice Test that a maker blacklisted in the token they would receive cannot place an ask order
+    /// @dev This tests the new check that verifies authorization on both base and quote tokens
+    function test_BlacklistedInReceiveToken_CannotPlaceAskOrder() public {
+        // Create a blacklist policy for pathUSD (the quote token alice would receive)
+        uint64 policyId = registry.createPolicy(pathUSDAdmin, ITIP403Registry.PolicyType.BLACKLIST);
+
+        // Set the policy on pathUSD
+        vm.prank(pathUSDAdmin);
+        pathUSD.changeTransferPolicyId(policyId);
+
+        // Blacklist alice in pathUSD
+        vm.prank(pathUSDAdmin);
+        registry.modifyPolicyBlacklist(policyId, alice, true);
+
+        // Verify alice is blacklisted in pathUSD
+        assertFalse(
+            registry.isAuthorized(policyId, alice), "Alice should be blacklisted in pathUSD"
+        );
+
+        // Alice tries to place an ask order to SELL token1 for pathUSD
+        // Even though alice is authorized in token1 (the escrow token), she is blacklisted in pathUSD
+        uint128 orderAmount = exchange.MIN_ORDER_AMOUNT() * 2;
+        vm.prank(alice);
+        try exchange.place(address(token1), orderAmount, false, 100) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(ITIP20.PolicyForbids.selector));
+        }
+    }
+
+    /// @notice Test that a maker blacklisted in either token cannot place a flip order
+    function test_BlacklistedUser_CannotPlaceFlipOrder() public {
+        // Create a blacklist policy
+        uint64 policyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+
+        // Set the policy on token1
+        vm.prank(admin);
+        token1.changeTransferPolicyId(policyId);
+
+        // Blacklist alice in token1
+        vm.prank(admin);
+        registry.modifyPolicyBlacklist(policyId, alice, true);
+
+        // Alice tries to place a flip bid order (buy token1, flip to sell token1)
+        // She is blacklisted in token1, so this should fail
+        uint128 orderAmount = exchange.MIN_ORDER_AMOUNT() * 2;
+        vm.prank(alice);
+        try exchange.placeFlip(address(token1), orderAmount, true, 100, 200) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(ITIP20.PolicyForbids.selector));
+        }
+
+        // Also test flip ask order
+        vm.prank(alice);
+        try exchange.placeFlip(address(token1), orderAmount, false, 200, 100) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(ITIP20.PolicyForbids.selector));
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        CANCEL STALE ORDER TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Test that a stale ask order can be canceled when maker is blacklisted
+    function test_CancelStaleOrder_Ask_Succeeds_WhenMakerBlacklisted() public {
+        // Create a blacklist policy
+        uint64 policyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+
+        // Set the policy on token1 (base token for asks)
+        vm.prank(admin);
+        token1.changeTransferPolicyId(policyId);
+
+        // Alice places an ask order (escrows base token)
+        uint128 orderAmount = exchange.MIN_ORDER_AMOUNT() * 2;
+        uint128 orderId = _placeAskOrder(alice, orderAmount, 100);
+
+        // Verify order exists
+        IStablecoinExchange.Order memory order = exchange.getOrder(orderId);
+        assertEq(order.maker, alice);
+        assertEq(order.remaining, orderAmount);
+
+        // Blacklist alice
+        vm.prank(admin);
+        registry.modifyPolicyBlacklist(policyId, alice, true);
+
+        // Verify alice is blacklisted
+        assertFalse(registry.isAuthorized(policyId, alice), "Alice should be blacklisted");
+
+        // Anyone (bob) can cancel the stale order
+        if (!isTempo) {
+            vm.expectEmit(true, true, true, true);
+            emit OrderCancelled(orderId);
+        }
+
+        vm.prank(bob);
+        exchange.cancelStaleOrder(orderId);
+
+        // Verify order is removed from orderbook
+        (uint128 askHead, uint128 askTail, uint128 askLiquidity) =
+            exchange.getTickLevel(address(token1), 100, false);
+        assertEq(askHead, 0);
+        assertEq(askTail, 0);
+        assertEq(askLiquidity, 0);
+
+        // Verify escrow is refunded to alice's internal balance
+        assertEq(
+            exchange.balanceOf(alice, address(token1)),
+            orderAmount,
+            "Alice should have escrow refunded to internal balance"
+        );
+    }
+
+    /// @notice Test that a stale bid order can be canceled when maker is blacklisted
+    function test_CancelStaleOrder_Bid_Succeeds_WhenMakerBlacklisted() public {
+        // Create a blacklist policy
+        uint64 policyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+
+        // Set the policy on pathUSD (quote token for bids)
+        vm.prank(pathUSDAdmin);
+        pathUSD.changeTransferPolicyId(policyId);
+
+        // Alice places a bid order (escrows quote token)
+        uint128 orderAmount = exchange.MIN_ORDER_AMOUNT() * 2;
+        uint128 orderId = _placeBidOrder(alice, orderAmount, 100);
+
+        // Calculate expected escrow
+        uint32 price = exchange.tickToPrice(100);
+        uint128 expectedEscrow =
+            uint128((uint256(orderAmount) * uint256(price)) / uint256(exchange.PRICE_SCALE()));
+
+        // Blacklist alice
+        vm.prank(admin);
+        registry.modifyPolicyBlacklist(policyId, alice, true);
+
+        // Anyone can cancel the stale order
+        if (!isTempo) {
+            vm.expectEmit(true, true, true, true);
+            emit OrderCancelled(orderId);
+        }
+
+        vm.prank(bob);
+        exchange.cancelStaleOrder(orderId);
+
+        // Verify order is removed from orderbook
+        (uint128 bidHead, uint128 bidTail, uint128 bidLiquidity) =
+            exchange.getTickLevel(address(token1), 100, true);
+        assertEq(bidHead, 0);
+        assertEq(bidTail, 0);
+        assertEq(bidLiquidity, 0);
+
+        // Verify escrow is refunded to alice's internal balance (quote token)
+        assertEq(
+            exchange.balanceOf(alice, address(pathUSD)),
+            expectedEscrow,
+            "Alice should have quote escrow refunded to internal balance"
+        );
+    }
+
+    /// @notice Test that cancelStaleOrder reverts when maker is still authorized
+    function test_CancelStaleOrder_RevertsIf_MakerNotBlacklisted() public {
+        // Create a blacklist policy (but don't blacklist alice)
+        uint64 policyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+
+        // Set the policy on token1
+        vm.prank(admin);
+        token1.changeTransferPolicyId(policyId);
+
+        // Alice places an ask order
+        uint128 orderId = _placeAskOrder(alice, exchange.MIN_ORDER_AMOUNT() * 2, 100);
+
+        // Alice is NOT blacklisted, so she's still authorized
+        assertTrue(registry.isAuthorized(policyId, alice), "Alice should be authorized");
+
+        // Try to cancel as stale - should fail
+        vm.prank(bob);
+        try exchange.cancelStaleOrder(orderId) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(IStablecoinExchange.OrderNotStale.selector));
+        }
+    }
+
+    /// @notice Test that cancelStaleOrder reverts for non-existent order
+    function test_CancelStaleOrder_RevertsIf_OrderDoesNotExist() public {
+        uint128 nonExistentOrderId = 999;
+
+        vm.prank(bob);
+        try exchange.cancelStaleOrder(nonExistentOrderId) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(IStablecoinExchange.OrderDoesNotExist.selector));
+        }
+    }
+
+    /// @notice Test that cancelStaleOrder works with whitelist policy (maker removed from whitelist)
+    function test_CancelStaleOrder_Succeeds_WhenMakerRemovedFromWhitelist() public {
+        // Create a whitelist policy
+        uint64 policyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+
+        // Whitelist alice and the exchange initially
+        vm.prank(admin);
+        registry.modifyPolicyWhitelist(policyId, alice, true);
+        vm.prank(admin);
+        registry.modifyPolicyWhitelist(policyId, address(exchange), true);
+
+        // Set the policy on token1
+        vm.prank(admin);
+        token1.changeTransferPolicyId(policyId);
+
+        // Alice places an ask order while whitelisted
+        uint128 orderAmount = exchange.MIN_ORDER_AMOUNT() * 2;
+        uint128 orderId = _placeAskOrder(alice, orderAmount, 100);
+
+        // Remove alice from whitelist
+        vm.prank(admin);
+        registry.modifyPolicyWhitelist(policyId, alice, false);
+
+        // Verify alice is no longer authorized
+        assertFalse(registry.isAuthorized(policyId, alice), "Alice should not be authorized");
+
+        // Anyone can cancel the stale order
+        vm.prank(bob);
+        exchange.cancelStaleOrder(orderId);
+
+        // Verify escrow is refunded
+        assertEq(
+            exchange.balanceOf(alice, address(token1)),
+            orderAmount,
+            "Alice should have escrow refunded"
+        );
+    }
+
+    /// @notice Test that the order maker can also cancel their own stale order
+    function test_CancelStaleOrder_MakerCanCancelOwnStaleOrder() public {
+        // Create a blacklist policy
+        uint64 policyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+
+        // Set the policy on token1
+        vm.prank(admin);
+        token1.changeTransferPolicyId(policyId);
+
+        // Alice places an ask order
+        uint128 orderAmount = exchange.MIN_ORDER_AMOUNT() * 2;
+        uint128 orderId = _placeAskOrder(alice, orderAmount, 100);
+
+        // Blacklist alice
+        vm.prank(admin);
+        registry.modifyPolicyBlacklist(policyId, alice, true);
+
+        // Alice can cancel her own stale order
+        vm.prank(alice);
+        exchange.cancelStaleOrder(orderId);
+
+        // Verify escrow is refunded
+        assertEq(
+            exchange.balanceOf(alice, address(token1)),
+            orderAmount,
+            "Alice should have escrow refunded"
+        );
+    }
+
+    /// @notice Test canceling stale order in the middle of a tick level's linked list
+    function test_CancelStaleOrder_RemovesFromMiddleOfLinkedList() public {
+        // Create a blacklist policy
+        uint64 policyId = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+
+        // Set the policy on token1
+        vm.prank(admin);
+        token1.changeTransferPolicyId(policyId);
+
+        // Place three ask orders at the same tick: alice, bob, alice
+        uint128 order1 = _placeAskOrder(alice, exchange.MIN_ORDER_AMOUNT(), 100);
+        uint128 order2 = _placeAskOrder(bob, exchange.MIN_ORDER_AMOUNT(), 100);
+        uint128 order3 = _placeAskOrder(alice, exchange.MIN_ORDER_AMOUNT(), 100);
+
+        // Verify tick has all three orders
+        (uint128 head, uint128 tail, uint128 liquidity) =
+            exchange.getTickLevel(address(token1), 100, false);
+        assertEq(head, order1);
+        assertEq(tail, order3);
+        assertEq(liquidity, exchange.MIN_ORDER_AMOUNT() * 3);
+
+        // Blacklist alice
+        vm.prank(admin);
+        registry.modifyPolicyBlacklist(policyId, alice, true);
+
+        // Cancel alice's first order (head of list)
+        vm.prank(bob);
+        exchange.cancelStaleOrder(order1);
+
+        // Verify bob's order is now head
+        (head, tail, liquidity) = exchange.getTickLevel(address(token1), 100, false);
+        assertEq(head, order2);
+        assertEq(tail, order3);
+        assertEq(liquidity, exchange.MIN_ORDER_AMOUNT() * 2);
+
+        // Cancel alice's second order (tail of list)
+        vm.prank(bob);
+        exchange.cancelStaleOrder(order3);
+
+        // Verify only bob's order remains
+        (head, tail, liquidity) = exchange.getTickLevel(address(token1), 100, false);
+        assertEq(head, order2);
+        assertEq(tail, order2);
+        assertEq(liquidity, exchange.MIN_ORDER_AMOUNT());
     }
 
     /*//////////////////////////////////////////////////////////////
