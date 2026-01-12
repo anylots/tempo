@@ -46,11 +46,13 @@ use secp256k1::SecretKey;
 use std::net::TcpListener;
 use tempfile::TempDir;
 use tempo_chainspec::TempoChainSpec;
+use tempo_commonware_node::feed::FeedStateHandle;
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_node::{
     TempoFullNode,
     evm::{TempoEvmFactory, evm::TempoEvm},
     node::TempoNode,
+    rpc::consensus::{TempoConsensusApiServer, TempoConsensusRpc},
 };
 use tempo_precompiles::{
     VALIDATOR_CONFIG_ADDRESS,
@@ -68,7 +70,7 @@ pub const TEST_MNEMONIC: &str = "test test test test test test test test test te
 pub struct Builder {
     epoch_length: Option<u64>,
     initial_dkg_outcome: Option<OnchainDkgOutcome>,
-    validators: Option<ordered::Map<PublicKey, SocketAddr>>,
+    validators: Option<ordered::Map<PublicKey, (SocketAddr, Address)>>,
 }
 
 impl Builder {
@@ -94,7 +96,10 @@ impl Builder {
         }
     }
 
-    pub fn with_validators(self, validators: ordered::Map<PublicKey, SocketAddr>) -> Self {
+    pub fn with_validators(
+        self,
+        validators: ordered::Map<PublicKey, (SocketAddr, Address)>,
+    ) -> Self {
         Self {
             validators: Some(validators),
             ..self
@@ -122,7 +127,7 @@ impl Builder {
             .insert_value("epochLength".to_string(), epoch_length)
             .wrap_err("failed to insert epoch length into genesis")?;
 
-        genesis.extra_data = initial_dkg_outcome.encode().freeze().to_vec().into();
+        genesis.extra_data = initial_dkg_outcome.encode().to_vec().into();
 
         let mut evm = setup_tempo_evm();
 
@@ -136,16 +141,16 @@ impl Builder {
                     .wrap_err("Failed to initialize validator config")
                     .unwrap();
 
-                for (i, (peer, addr)) in validators.iter_pairs().enumerate() {
+                for (peer, (net_addr, chain_addr)) in validators.iter_pairs() {
                     validator_config
                         .add_validator(
                             admin(),
                             IValidatorConfig::addValidatorCall {
-                                newValidatorAddress: validator(i as u32),
-                                publicKey: peer.encode().freeze().as_ref().try_into().unwrap(),
+                                newValidatorAddress: *chain_addr,
+                                publicKey: peer.encode().as_ref().try_into().unwrap(),
                                 active: true,
-                                inboundAddress: addr.to_string(),
-                                outboundAddress: addr.to_string(),
+                                inboundAddress: net_addr.to_string(),
+                                outboundAddress: net_addr.to_string(),
                             },
                         )
                         .unwrap();
@@ -194,6 +199,8 @@ pub struct ExecutionNodeConfig {
     pub port: u16,
     /// Validator public key for filtering subblock transactions.
     pub validator_key: Option<B256>,
+    /// Feed state handle for consensus RPC (if validator).
+    pub feed_state: Option<FeedStateHandle>,
 }
 
 impl ExecutionNodeConfig {
@@ -233,6 +240,7 @@ impl ExecutionNodeConfigGenerator {
                     trusted_peers: vec![],
                     port: 0,
                     validator_key: None,
+                    feed_state: None,
                 })
                 .collect();
         }
@@ -258,6 +266,7 @@ impl ExecutionNodeConfigGenerator {
                 trusted_peers: vec![],
                 port,
                 validator_key: None,
+                feed_state: None,
             })
             .collect();
 
@@ -379,6 +388,27 @@ impl ExecutionRuntime {
                                 .unwrap();
                             let _ = response.send(receipt);
                         }
+                        Message::SetNextFullDkgCeremony(set_next_full_dkg_ceremony) => {
+                            let SetNextFullDkgCeremony {
+                                http_url,
+                                epoch,
+                                response,
+                            } = *set_next_full_dkg_ceremony;
+                            let provider = ProviderBuilder::new()
+                                .wallet(wallet.clone())
+                                .connect_http(http_url);
+                            let validator_config =
+                                IValidatorConfig::new(VALIDATOR_CONFIG_ADDRESS, provider);
+                            let receipt = validator_config
+                                .setNextFullDkgCeremony(epoch)
+                                .send()
+                                .await
+                                .unwrap()
+                                .get_receipt()
+                                .await
+                                .unwrap();
+                            let _ = response.send(receipt);
+                        }
                         Message::SpawnNode {
                             name,
                             config,
@@ -460,6 +490,26 @@ impl ExecutionRuntime {
                     address,
                     active,
                     http_url,
+                    response: tx,
+                }
+                .into(),
+            )
+            .wrap_err("the execution runtime went away")?;
+        rx.await
+            .wrap_err("the execution runtime dropped the response channel before sending a receipt")
+    }
+
+    pub async fn set_next_full_dkg_ceremony(
+        &self,
+        http_url: Url,
+        epoch: u64,
+    ) -> eyre::Result<TransactionReceipt> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.to_runtime
+            .send(
+                SetNextFullDkgCeremony {
+                    http_url,
+                    epoch,
                     response: tx,
                 }
                 .into(),
@@ -639,7 +689,9 @@ pub async fn launch_execution_node<P: AsRef<Path>>(
             RpcServerArgs::default()
                 .with_unused_ports()
                 .with_http()
-                .with_http_api(RpcModuleSelection::All),
+                .with_http_api(RpcModuleSelection::All)
+                .with_ws()
+                .with_ws_api(RpcModuleSelection::All),
         )
         .with_datadir_args(DatadirArgs {
             datadir: datadir.as_ref().to_path_buf().into(),
@@ -665,10 +717,18 @@ pub async fn launch_execution_node<P: AsRef<Path>>(
         });
 
     let tempo_node = TempoNode::default().with_validator_key(config.validator_key);
+    let feed_state = config.feed_state;
     let node_handle = NodeBuilder::new(node_config)
         .with_database(database)
         .with_launch_context(task_manager.executor())
         .node(tempo_node)
+        .extend_rpc_modules(move |ctx| {
+            if let Some(feed_state) = feed_state {
+                ctx.modules
+                    .merge_configured(TempoConsensusRpc::new(feed_state).into_rpc())?;
+            }
+            Ok(())
+        })
         .launch()
         .await
         .wrap_err_with(|| {
@@ -689,6 +749,7 @@ pub async fn launch_execution_node<P: AsRef<Path>>(
 enum Message {
     AddValidator(Box<AddValidator>),
     ChangeValidatorStatus(Box<ChangeValidatorStatus>),
+    SetNextFullDkgCeremony(Box<SetNextFullDkgCeremony>),
     SpawnNode {
         name: String,
         config: ExecutionNodeConfig,
@@ -710,6 +771,12 @@ impl From<ChangeValidatorStatus> for Message {
     }
 }
 
+impl From<SetNextFullDkgCeremony> for Message {
+    fn from(value: SetNextFullDkgCeremony) -> Self {
+        Self::SetNextFullDkgCeremony(value.into())
+    }
+}
+
 #[derive(Debug)]
 struct AddValidator {
     /// URL of the node to send this to.
@@ -726,6 +793,14 @@ struct ChangeValidatorStatus {
     http_url: Url,
     address: Address,
     active: bool,
+    response: tokio::sync::oneshot::Sender<TransactionReceipt>,
+}
+
+#[derive(Debug)]
+struct SetNextFullDkgCeremony {
+    /// URL of the node to send this to.
+    http_url: Url,
+    epoch: u64,
     response: tokio::sync::oneshot::Sender<TransactionReceipt>,
 }
 

@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, time::Duration};
+use std::time::Duration;
 
 use alloy::transports::http::reqwest::Url;
 use commonware_macros::test_traced;
@@ -8,7 +8,7 @@ use commonware_runtime::{
 };
 use futures::future::join_all;
 
-use crate::{CONSENSUS_NODE_PREFIX, Setup, execution_runtime::validator, setup_validators};
+use crate::{CONSENSUS_NODE_PREFIX, Setup, setup_validators};
 
 #[test_traced]
 fn validator_is_added_to_a_set_of_three() {
@@ -93,11 +93,9 @@ impl AssertValidatorIsAdded {
             let receipt = execution_runtime
                 .add_validator(
                     http_url.clone(),
-                    // XXX: The addValidator call above adding the initial set
-                    // adds validators 0..validators.len() (i.e. exclusive validators.len())
-                    validator(validators.len() as u32),
+                    new_validator.chain_address,
                     new_validator.public_key().clone(),
-                    SocketAddr::from(([127, 0, 0, 1], (validators.len() + 1) as u16)),
+                    new_validator.network_address,
                 )
                 .await
                 .unwrap();
@@ -159,7 +157,7 @@ impl AssertValidatorIsAdded {
             }
 
             // Then, all how_many_initial + 1 nodes must observe an epoch with the
-            // same number of participants (= how_many_intial + 1).
+            // same number of participants (= how_many_initial + 1).
             loop {
                 context.sleep(Duration::from_secs(1)).await;
 
@@ -228,13 +226,13 @@ impl AssertValidatorIsRemoved {
                 // XXX: The addValidator call above adding the initial set
                 // adds validators 0..validators.len(). So this is the last of
                 // the validators
-                .change_validator_status(http_url, validator(validators.len() as u32 - 1), false)
+                .change_validator_status(http_url, validators.last().unwrap().chain_address, false)
                 .await
                 .unwrap();
 
             tracing::debug!(
                 block.number = receipt.block_number,
-                "chanegValidatorStatus call returned receipt"
+                "changeValidatorStatus call returned receipt"
             );
 
             tracing::info!("validator was removed");

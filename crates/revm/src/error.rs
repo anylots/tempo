@@ -129,6 +129,12 @@ pub enum TempoInvalidTransaction {
     /// Fee payment error.
     #[error(transparent)]
     CollectFeePreTx(#[from] FeePaymentError),
+
+    /// Tempo transaction validation error from validate_calls().
+    ///
+    /// This wraps validation errors from the shared validate_calls function.
+    #[error("{0}")]
+    CallsValidation(&'static str),
 }
 
 impl InvalidTxError for TempoInvalidTransaction {
@@ -150,6 +156,12 @@ impl InvalidTxError for TempoInvalidTransaction {
 impl<DBError> From<TempoInvalidTransaction> for EVMError<DBError, TempoInvalidTransaction> {
     fn from(err: TempoInvalidTransaction) -> Self {
         Self::Transaction(err)
+    }
+}
+
+impl From<&'static str> for TempoInvalidTransaction {
+    fn from(err: &'static str) -> Self {
+        Self::CallsValidation(err)
     }
 }
 
@@ -249,5 +261,27 @@ mod tests {
             tempo_err,
             TempoInvalidTransaction::EthInvalidTransaction(_)
         ));
+    }
+
+    #[test]
+    fn test_is_nonce_too_low() {
+        let err = TempoInvalidTransaction::EthInvalidTransaction(InvalidTransaction::NonceTooLow {
+            tx: 1,
+            state: 0,
+        });
+        assert!(err.is_nonce_too_low());
+        assert!(err.as_invalid_tx_err().is_some());
+
+        let err = TempoInvalidTransaction::InvalidFeePayerSignature;
+        assert!(!err.is_nonce_too_low());
+        assert!(err.as_invalid_tx_err().is_none());
+    }
+
+    #[test]
+    fn test_fee_payment_error() {
+        let _: EVMError<(), TempoInvalidTransaction> = FeePaymentError::InsufficientAmmLiquidity {
+            fee: U256::from(1000),
+        }
+        .into();
     }
 }

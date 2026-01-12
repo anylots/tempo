@@ -1,6 +1,7 @@
 //! A testing node that can start and stop both consensus and execution layers.
 
 use crate::execution_runtime::{self, ExecutionNode, ExecutionNodeConfig, ExecutionRuntimeHandle};
+use alloy_primitives::Address;
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_p2p::simulated::{Control, Oracle, SocketManager};
 use commonware_runtime::{Handle, deterministic::Context};
@@ -13,12 +14,12 @@ use reth_ethereum::{
     storage::BlockNumReader,
 };
 use reth_node_builder::NodeTypesWithDBAdapter;
-use std::{path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tempo_commonware_node::{
-    BOUNDARY_CERT_CHANNEL_IDENT, BOUNDARY_CERT_LIMIT, BROADCASTER_CHANNEL_IDENT, BROADCASTER_LIMIT,
-    DKG_CHANNEL_IDENT, DKG_LIMIT, MARSHAL_CHANNEL_IDENT, MARSHAL_LIMIT, PENDING_CHANNEL_IDENT,
-    PENDING_LIMIT, RECOVERED_CHANNEL_IDENT, RECOVERED_LIMIT, RESOLVER_CHANNEL_IDENT,
-    RESOLVER_LIMIT, SUBBLOCKS_CHANNEL_IDENT, SUBBLOCKS_LIMIT, consensus,
+    BROADCASTER_CHANNEL_IDENT, BROADCASTER_LIMIT, DKG_CHANNEL_IDENT, DKG_LIMIT,
+    MARSHAL_CHANNEL_IDENT, MARSHAL_LIMIT, PENDING_CHANNEL_IDENT, PENDING_LIMIT,
+    RECOVERED_CHANNEL_IDENT, RECOVERED_LIMIT, RESOLVER_CHANNEL_IDENT, RESOLVER_LIMIT,
+    SUBBLOCKS_CHANNEL_IDENT, SUBBLOCKS_LIMIT, consensus,
 };
 use tempo_node::node::TempoNode;
 use tracing::{debug, instrument};
@@ -29,28 +30,37 @@ where
     TClock: commonware_runtime::Clock,
 {
     /// Unique identifier for this node
-    uid: String,
+    pub uid: String,
     /// Public key of the validator
-    public_key: PublicKey,
+    pub public_key: PublicKey,
     /// Simulated network oracle for test environments
-    oracle: Oracle<PublicKey, TClock>,
+    pub oracle: Oracle<PublicKey, TClock>,
     /// Consensus configuration used to start the consensus engine
-    consensus_config:
+    pub consensus_config:
         consensus::Builder<Control<PublicKey, TClock>, Context, SocketManager<PublicKey, TClock>>,
     /// Running consensus handle (None if consensus is stopped)
-    consensus_handle: Option<Handle<eyre::Result<()>>>,
+    pub consensus_handle: Option<Handle<eyre::Result<()>>>,
     /// Path to the execution node's data directory
-    execution_node_datadir: PathBuf,
+    pub execution_node_datadir: PathBuf,
     /// Running execution node (None if execution is stopped)
-    execution_node: Option<ExecutionNode>,
+    pub execution_node: Option<ExecutionNode>,
     /// Handle to the execution runtime for spawning new execution nodes
-    execution_runtime: ExecutionRuntimeHandle,
+    pub execution_runtime: ExecutionRuntimeHandle,
     /// Configuration for the execution node
-    execution_config: ExecutionNodeConfig,
+    pub execution_config: ExecutionNodeConfig,
     /// Database instance for the execution node
-    execution_database: Option<Arc<DatabaseEnv>>,
+    pub execution_database: Option<Arc<DatabaseEnv>>,
+    /// The execution node name assigned at initialization. Important when
+    /// constructing the datadir at which to find the node.
+    pub execution_node_name: String,
     /// Last block number in database when stopped (used for restart verification)
-    last_db_block_on_stop: Option<u64>,
+    pub last_db_block_on_stop: Option<u64>,
+    /// Network address of the node. Used for execution the validator-config
+    /// addValidator contract call.
+    pub network_address: SocketAddr,
+    /// The chain address of the node. Used for executing validator-config smart
+    /// contract calls.
+    pub chain_address: Address,
 }
 
 impl<TClock> TestingNode<TClock>
@@ -60,6 +70,8 @@ where
     /// Create a new TestingNode without spawning execution or starting consensus.
     ///
     /// Call `start()` to start both consensus and execution.
+    // FIXME: replace this by a `Config` to make this more digestible.
+    #[expect(clippy::too_many_arguments, reason = "quickly threw this together")]
     pub fn new(
         uid: String,
         public_key: PublicKey,
@@ -71,11 +83,14 @@ where
         >,
         execution_runtime: ExecutionRuntimeHandle,
         execution_config: ExecutionNodeConfig,
+        network_address: SocketAddr,
+        chain_address: Address,
     ) -> Self {
         let execution_node_datadir = execution_runtime
             .nodes_dir()
             .join(execution_runtime::execution_node_name(&public_key));
 
+        let execution_node_name = execution_runtime::execution_node_name(&public_key);
         Self {
             uid,
             public_key,
@@ -86,8 +101,11 @@ where
             execution_node_datadir,
             execution_runtime,
             execution_config,
+            execution_node_name,
             execution_database: None,
             last_db_block_on_stop: None,
+            network_address,
+            chain_address,
         }
     }
 
@@ -160,7 +178,7 @@ where
         let execution_node = self
             .execution_runtime
             .spawn_node(
-                &execution_runtime::execution_node_name(&self.public_key),
+                &self.execution_node_name,
                 self.execution_config.clone(),
                 self.execution_database.as_ref().unwrap().clone(),
             )
@@ -242,12 +260,6 @@ where
             .register(DKG_CHANNEL_IDENT, DKG_LIMIT)
             .await
             .unwrap();
-        let boundary_certs = self
-            .oracle
-            .control(self.public_key.clone())
-            .register(BOUNDARY_CERT_CHANNEL_IDENT, BOUNDARY_CERT_LIMIT)
-            .await
-            .unwrap();
         let subblocks = self
             .oracle
             .control(self.public_key.clone())
@@ -256,14 +268,7 @@ where
             .unwrap();
 
         let consensus_handle = engine.start(
-            pending,
-            recovered,
-            resolver,
-            broadcast,
-            marshal,
-            dkg,
-            boundary_certs,
-            subblocks,
+            pending, recovered, resolver, broadcast, marshal, dkg, subblocks,
         );
 
         self.consensus_handle = Some(consensus_handle);

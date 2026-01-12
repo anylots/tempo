@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use commonware_consensus::types::{Epocher, FixedEpocher};
+use commonware_consensus::types::{Epocher, FixedEpocher, Height};
 use commonware_macros::test_traced;
 use commonware_runtime::{
     Clock, Metrics as _, Runner as _,
@@ -29,6 +29,9 @@ struct RestartSetup {
     restart_height: u64,
     /// Final height that all validators (including restarted) must reach
     final_height: u64,
+
+    /// Whether to assert that DKG rounds were skipped
+    assert_skips: bool,
 }
 
 /// Runs a validator restart test with the given configuration
@@ -39,6 +42,7 @@ fn run_restart_test(
         shutdown_height,
         restart_height,
         final_height,
+        assert_skips,
     }: RestartSetup,
 ) -> String {
     let _ = tempo_eyre::install();
@@ -55,7 +59,13 @@ fn run_restart_test(
             height = shutdown_height,
             "waiting for network to reach target height before stopping a validator",
         );
-        wait_for_height(&context, node_setup.how_many_signers, shutdown_height).await;
+        wait_for_height(
+            &context,
+            node_setup.how_many_signers,
+            shutdown_height,
+            false,
+        )
+        .await;
 
         // Randomly select a validator to kill
         let idx = context.gen_range(0..validators.len());
@@ -67,7 +77,13 @@ fn run_restart_test(
             height = restart_height,
             "waiting for remaining validators to reach target height before restarting validator",
         );
-        wait_for_height(&context, node_setup.how_many_signers - 1, restart_height).await;
+        wait_for_height(
+            &context,
+            node_setup.how_many_signers - 1,
+            restart_height,
+            false,
+        )
+        .await;
 
         debug!("target height reached, restarting stopped validator");
         validators[idx].start().await;
@@ -80,14 +96,26 @@ fn run_restart_test(
             height = final_height,
             "waiting for reconstituted validators to reach target height to reach test success",
         );
-        wait_for_height(&context, node_setup.how_many_signers, final_height).await;
+        wait_for_height(
+            &context,
+            node_setup.how_many_signers,
+            final_height,
+            assert_skips,
+        )
+        .await;
 
         context.auditor().state()
     })
 }
 
 /// Wait for a specific number of validators to reach a target height
-async fn wait_for_height(context: &Context, expected_validators: u32, target_height: u64) {
+async fn wait_for_height(
+    context: &Context,
+    expected_validators: u32,
+    target_height: u64,
+    assert_skips: bool,
+) {
+    let mut skips_observed = false;
     loop {
         let metrics = context.encode();
         let mut validators_at_height = 0;
@@ -108,8 +136,13 @@ async fn wait_for_height(context: &Context, expected_validators: u32, target_hei
                     validators_at_height += 1;
                 }
             }
+            if metric.ends_with("_rounds_skipped_total") {
+                let count = value.parse::<u64>().unwrap();
+                skips_observed |= count > 0;
+            }
         }
         if validators_at_height == expected_validators {
+            assert!(!assert_skips || skips_observed);
             break;
         }
         context.sleep(Duration::from_secs(1)).await;
@@ -195,7 +228,7 @@ fn network_resumes_after_restart_with_el_p2p() {
                 height = shutdown_height,
                 "waiting for network to reach target height before stopping a validator",
             );
-            wait_for_height(&context, setup.how_many_signers, shutdown_height).await;
+            wait_for_height(&context, setup.how_many_signers, shutdown_height, false).await;
 
             let idx = context.gen_range(0..validators.len());
             validators[idx].stop().await;
@@ -215,7 +248,7 @@ fn network_resumes_after_restart_with_el_p2p() {
                 height = final_height,
                 "waiting for reconstituted validators to reach target height to reach test success",
             );
-            wait_for_height(&context, validators.len() as u32, final_height).await;
+            wait_for_height(&context, validators.len() as u32, final_height, false).await;
         })
     }
 }
@@ -249,7 +282,7 @@ fn network_resumes_after_restart_without_el_p2p() {
                 height = shutdown_height,
                 "waiting for network to reach target height before stopping a validator",
             );
-            wait_for_height(&context, setup.how_many_signers, shutdown_height).await;
+            wait_for_height(&context, setup.how_many_signers, shutdown_height, false).await;
 
             let idx = context.gen_range(0..validators.len());
             validators[idx].stop().await;
@@ -269,7 +302,7 @@ fn network_resumes_after_restart_without_el_p2p() {
                 height = final_height,
                 "waiting for reconstituted validators to reach target height to reach test success",
             );
-            wait_for_height(&context, validators.len() as u32, final_height).await;
+            wait_for_height(&context, validators.len() as u32, final_height, false).await;
         })
     }
 }
@@ -283,13 +316,14 @@ fn validator_catches_up_to_network_during_epoch() {
         shutdown_height: 5,
         restart_height: 10,
         final_height: 15,
+        assert_skips: false,
     };
 
     let _state = run_restart_test(setup);
 }
 
 #[test_traced]
-fn validator_catches_up_across_epochs() {
+fn validator_catches_up_with_gap_of_one_epoch() {
     let _ = tempo_eyre::install();
 
     let epoch_length = 30;
@@ -298,6 +332,25 @@ fn validator_catches_up_across_epochs() {
         shutdown_height: epoch_length + 1,
         restart_height: 2 * epoch_length + 1,
         final_height: 3 * epoch_length + 1,
+        assert_skips: false,
+    };
+
+    let _state = run_restart_test(setup);
+}
+
+#[test_traced]
+fn validator_catches_up_with_gap_of_three_epochs() {
+    let _ = tempo_eyre::install();
+
+    let epoch_length = 30;
+    let setup = RestartSetup {
+        node_setup: Setup::new()
+            .epoch_length(epoch_length)
+            .connect_execution_layer_nodes(true),
+        shutdown_height: epoch_length + 1,
+        restart_height: 4 * epoch_length + 1,
+        final_height: 5 * epoch_length + 1,
+        assert_skips: true,
     };
 
     let _state = run_restart_test(setup);
@@ -307,7 +360,7 @@ fn validator_catches_up_across_epochs() {
 fn single_node_recovers_after_finalizing_ceremony() {
     AssertNodeRecoversAfterFinalizingBlock {
         n_validators: 1,
-        epoch_length: 10,
+        epoch_length: 6,
         shutdown_after_finalizing: ShutdownAfterFinalizing::Ceremony,
     }
     .run()
@@ -323,7 +376,7 @@ fn node_recovers_after_finalizing_ceremony_four_validators() {
     .run()
 }
 
-#[test_traced("ERROR")]
+#[test_traced]
 fn node_recovers_after_finalizing_middle_of_epoch_four_validators() {
     AssertNodeRecoversAfterFinalizingBlock {
         n_validators: 4,
@@ -371,21 +424,25 @@ enum ShutdownAfterFinalizing {
 }
 
 impl ShutdownAfterFinalizing {
-    fn is_target_height(&self, epoch_length: u64, block_height: u64) -> bool {
+    fn is_target_height(&self, epoch_length: u64, block_height: Height) -> bool {
         let epoch_strategy = FixedEpocher::new(NZU64!(epoch_length));
         match self {
             // NOTE: ceremonies are finalized on the pre-to-last block, so
             // block + 1 needs to be the boundary / last block.
             Self::Ceremony => {
-                block_height + 1 == epoch_strategy.containing(block_height + 1).unwrap().last()
+                block_height.next()
+                    == epoch_strategy
+                        .containing(block_height.next())
+                        .unwrap()
+                        .last()
             }
             Self::Boundary => {
                 block_height == epoch_strategy.containing(block_height).unwrap().last()
             }
             Self::BeforeMiddleOfEpoch => {
-                (block_height + 1).rem_euclid(epoch_length) == epoch_length / 2
+                block_height.next().get().rem_euclid(epoch_length) == epoch_length / 2
             }
-            Self::MiddleOfEpoch => block_height.rem_euclid(epoch_length) == epoch_length / 2,
+            Self::MiddleOfEpoch => block_height.get().rem_euclid(epoch_length) == epoch_length / 2,
         }
     }
 }
@@ -446,9 +503,11 @@ impl AssertNodeRecoversAfterFinalizingBlock {
                     let value = parts.next().unwrap();
 
                     if metric.ends_with("_marshal_processed_height") {
-                        let height = value.parse::<u64>().unwrap();
-                        if shutdown_after_finalizing.is_target_height(setup.epoch_length, height) {
-                            break 'wait_to_boundary (metric.to_string(), height);
+                        let value = value.parse::<u64>().unwrap();
+                        if shutdown_after_finalizing
+                            .is_target_height(setup.epoch_length, Height::new(value))
+                        {
+                            break 'wait_to_boundary (metric.to_string(), value);
                         }
                     }
                 }

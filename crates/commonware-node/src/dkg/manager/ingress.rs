@@ -1,4 +1,8 @@
-use commonware_consensus::{Reporter, marshal::Update, types::Epoch};
+use commonware_consensus::{
+    Reporter,
+    marshal::Update,
+    types::{Epoch, Height},
+};
 use commonware_cryptography::{
     bls12381::{dkg::SignedDealerLog, primitives::variant::MinSig},
     ed25519::{PrivateKey, PublicKey},
@@ -44,7 +48,7 @@ impl Mailbox {
     pub(crate) async fn get_dkg_outcome(
         &self,
         digest: Digest,
-        height: u64,
+        height: Height,
     ) -> eyre::Result<OnchainDkgOutcome> {
         let (response, rx) = oneshot::channel();
         self.inner
@@ -97,7 +101,7 @@ impl Message {
 }
 
 pub(super) enum Command {
-    Finalized(Finalized),
+    Update(Box<Update<Block>>),
 
     // From application
     GetDealerLog(GetDealerLog),
@@ -105,9 +109,9 @@ pub(super) enum Command {
     VerifyDealerLog(VerifyDealerLog),
 }
 
-impl From<Finalized> for Command {
-    fn from(value: Finalized) -> Self {
-        Self::Finalized(value)
+impl From<Update<Block>> for Command {
+    fn from(value: Update<Block>) -> Self {
+        Self::Update(Box::new(value))
     }
 }
 
@@ -129,11 +133,6 @@ impl From<GetDkgOutcome> for Command {
     }
 }
 
-pub(super) struct Finalized {
-    pub(super) block: Box<Block>,
-    pub(super) acknowledgment: Exact,
-}
-
 pub(super) struct GetDealerLog {
     pub(super) epoch: Epoch,
     pub(super) response: oneshot::Sender<Option<SignedDealerLog<MinSig, PrivateKey>>>,
@@ -141,7 +140,7 @@ pub(super) struct GetDealerLog {
 
 pub(super) struct GetDkgOutcome {
     pub(super) digest: Digest,
-    pub(super) height: u64,
+    pub(super) height: Height,
     pub(super) response: oneshot::Sender<OnchainDkgOutcome>,
 }
 
@@ -154,19 +153,13 @@ pub(super) struct VerifyDealerLog {
 impl Reporter for Mailbox {
     type Activity = Update<Block, Exact>;
 
-    async fn report(&mut self, update: Self::Activity) {
-        let Update::Block(block, acknowledgment) = update else {
-            return;
-        };
+    async fn report(&mut self, activity: Self::Activity) {
         if let Err(error) = self
             .inner
-            .unbounded_send(Message::in_current_span(Finalized {
-                block: Box::new(block),
-                acknowledgment,
-            }))
+            .unbounded_send(Message::in_current_span(activity))
             .wrap_err("dkg manager no longer running")
         {
-            warn!(%error, "failed to report finalized block to dkg manager")
+            warn!(%error, "failed to report finalization activity to dkg manager")
         }
     }
 }
